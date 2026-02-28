@@ -1,137 +1,100 @@
 ; ============================================================
 ; CapsLockNotificationPro.ahk (AutoHotkey v2)
-; 功能：大小写切换时显示提示（升级版）
-; 特点：
-;   - 显示图标（大写🔒 / 小写🔓）
-;   - 提示位置在屏幕中央
-;   - 同时显示输入法状态（中/英）
-;   - 快速响应（30ms 检测）
+; 功能：大小写 + 输入法状态提示（独立显示）
+; - CapsLock：显示 🔒大写 / 🔓小写
+; - Shift：显示 中 / 英
 ; ============================================================
 
 #SingleInstance Force
 Persistent
 
-; ============================================================
-; 可配置参数
-; ============================================================
-global showDuration := 800      ; 提示显示时间（毫秒）
-global checkInterval := 30      ; 检测间隔（毫秒），越小响应越快
-global tipX := "Mouse"          ; 提示 X 位置："Mouse" 或具体数字
-global tipY := "Mouse"          ; 提示 Y 位置："Mouse" 或具体数字
-
-; ============================================================
-; 内部状态
-; ============================================================
+global showDuration := 800
 global lastCapsState := GetKeyState("CapsLock", "T")
-global lastImeState := ""
 
-; 托盘提示
-A_TrayTip := "大小写提示Pro"
+A_TrayTip := "大小写+输入法提示"
 
-; 定时器检查状态
-SetTimer(CheckKeyboardState, checkInterval)
+; CapsLock 监听
+SetTimer(CheckCapsLock, 30)
+
+; Shift 监听（只显示中/英）
+~Shift:: {
+    KeyWait("Shift")  ; 等待 Shift 释放
+    ime := GetIMEStatus()
+    MouseGetPos(&x, &y)
+    ToolTip(ime, x + 10, y + 10)
+    SetTimer(RemoveTip, 800)
+}
 
 return
 
 ; ============================================================
-; 检查键盘状态变化
+; CapsLock 状态检查
 ; ============================================================
-CheckKeyboardState() {
-    global lastCapsState, lastImeState
-
-    ; 获取当前状态
-    currentCaps := GetKeyState("CapsLock", "T")
-    currentIme := GetIMELanguage()
-
-    ; 检测变化
-    capsChanged := (currentCaps != lastCapsState)
-    imeChanged := (currentIme != lastImeState)
-
-    if (capsChanged || imeChanged) {
-        lastCapsState := currentCaps
-        lastImeState := currentIme
-
-        ; 构建提示内容
-        tip := ""
-
-        ; 大小写状态
-        if (currentCaps) {
-            tip .= "🔒 大写"
-        } else {
-            tip .= "🔓 小写"
-        }
-
-        ; 输入法状态
-        if (currentIme != "") {
-            tip .= " | " . currentIme
-        }
-
-        ; 显示提示
-        ShowTip(tip)
+CheckCapsLock() {
+    global lastCapsState
+    current := GetKeyState("CapsLock", "T")
+    if (current != lastCapsState) {
+        lastCapsState := current
+        ShowCapsStatus(current)
     }
 }
 
 ; ============================================================
-; 获取输入法语言
+; 只显示大小写状态
 ; ============================================================
-GetIMELanguage() {
-    try {
-        ; 获取当前窗口的输入法状态
-        hWnd := WinGetID("A")
-        if (!hWnd)
-            return ""
-
-        ; 尝试获取输入法信息
-        threadID := DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "Ptr", 0)
-        hKL := DllCall("GetKeyboardLayout", "UInt", threadID, "Ptr")
-
-        ; 常见输入法 LANGID
-        langID := hKL & 0xFFFF
-
-        if (langID = 0x0804) {
-            ; 中文输入法，进一步判断是否中文模式
-            return "中"
-        } else if (langID = 0x0409) {
-            return "英"
-        }
-    }
-    return ""
+ShowCapsStatus(isCaps) {
+    global showDuration
+    tip := isCaps ? "🔒 大写" : "🔓 小写"
+    MouseGetPos(&x, &y)
+    ToolTip(tip, x + 10, y + 10)
+    SetTimer(RemoveTip, showDuration)
 }
 
 ; ============================================================
-; 显示提示（跟随鼠标）
+; 只显示中/英状态
 ; ============================================================
-ShowTip(text) {
-    global tipX, tipY, showDuration
-
-    ; 获取鼠标位置
-    MouseGetPos(&mouseX, &mouseY)
-
-    ; 计算显示位置
-    if (tipX = "Mouse") {
-        x := mouseX + 10
-    } else if (tipX = "Center") {
-        x := A_ScreenWidth / 2 - 60
-    } else {
-        x := tipX
+ShowIMEOnly() {
+    global showDuration
+    ime := GetIMEStatus()
+    if (ime != "") {
+        MouseGetPos(&x, &y)
+        ToolTip(ime, x + 10, y + 10)
+        SetTimer(RemoveTip, showDuration)
     }
-
-    if (tipY = "Mouse") {
-        y := mouseY + 10
-    } else if (tipY = "Center") {
-        y := A_ScreenHeight / 2 - 30
-    } else {
-        y := tipY
-    }
-
-    ; 显示提示
-    ToolTip(text, x, y)
-
-    ; 设置关闭定时器
-    SetTimer(RemoveToolTip, showDuration)
 }
 
-RemoveToolTip() {
+; ============================================================
+; 获取输入法中/英状态（搜狗输入法专用）
+; ============================================================
+GetIMEStatus() {
+    try hWnd := WinExist("A")
+    catch
+        return ""
+
+    if (!hWnd)
+        return ""
+
+    ; 获取默认 IME 窗口
+    hIMEWnd := DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", hWnd, "UInt")
+
+    if (!hIMEWnd)
+        return ""
+
+    ; 发送 WM_IME_CONTROL 消息获取状态
+    ; 0x283 = WM_IME_CONTROL
+    ; 0x005 = IMC_GETCONVERSIONSTATUS
+    DetectHiddenWindows(true)
+    result := SendMessage(0x283, 0x005, 0, , "ahk_id " . hIMEWnd)
+    DetectHiddenWindows(false)
+
+    ; result = 1 表示中文模式，0 表示英文模式
+    return (result = 1) ? "中" : "英"
+}
+
+; ============================================================
+; 关闭提示
+; ============================================================
+RemoveTip() {
     ToolTip()
-    SetTimer(RemoveToolTip, 0)
+    SetTimer(RemoveTip, 0)
 }
